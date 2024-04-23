@@ -9,12 +9,17 @@ class CanListener(threading.Thread):
         self.bus = can.interface.Bus(channel='vcan0', bustype='socketcan', bitrate = 500000)
         self.running = True
         self.pageName=pageName
+        self.parameterIds=[1520, 1522, 1523, 152, 277]
     #Gear: cansend vcan0 115#ABCDEFABCDEF02FF
     def run(self):
         while self.running:
             message = self.bus.recv()
+            
             if message.arbitration_id == 277 and self.pageName == "MainWindow":  # Adjust this ID according to your CAN message
                 self.updateLabelMain(str(message.data)[39:40])
+            if message.arbitration_id in self.parameterIds and self.pageName == "SecondWindow":
+                self.updateLabelMain(message)
+
                 
 
     def stop(self):
@@ -34,10 +39,6 @@ class MainWindow(Frame):
         self.show_frame("SecondWindow")
 
     def createWidgets(self):
-        # self.button= Button(self, text="Change1", command = self.showSecondWindow, 
-        #                     height=0, width=0, bd=0,  bg='black', fg='black', highlightthickness=0, 
-        #                     activebackground="black", activeforeground="black" )
-        # self.button.pack()
         self.label_text = StringVar()
         self.label_text.set(str(self.counter))
         label = Label(self, textvariable=self.label_text, font=("Arial", 200), bg='black', fg='white')
@@ -55,21 +56,18 @@ class SecondWindow(Frame):
     def __init__(self, master):
         super().__init__(master, bg='black', padx=0, pady=0, width=480, height=320)
         self.master=master
-        self.counter="N"
+        self.initial="0"
         self.size()
         self.createWidgets()
         self.show_frame=master.show_frame
-
+        
     def showMainWindow(self):
         self.show_frame("MainWindow")
 
-    def createWidgets(self):
-        parameters = ["Parameter1", "Parameter2", "Parameter3", "Parameter4", "Parameter5"]
-
-            
-        self.label1=Label(self, text="Parameter1:",font=("Arial", 24), bg = "black", fg = "white")
+    def createWidgets(self):       
+        self.label1=Label(self, text="RPM:",font=("Arial", 24), bg = "black", fg = "white")
         self.label1.place(relx = 0, x = 10, y = 20)
-        self.label2=Label(self, text="Parameter2:",font=("Arial", 24), bg = "black", fg = "white")
+        self.label2=Label(self, text="Coolant:",font=("Arial", 24), bg = "black", fg = "white")
         self.label2.place(relx = 0, x = 10, y = 80)
         self.label3=Label(self, text="Parameter3:",font=("Arial", 24), bg = "black", fg = "white")
         self.label3.place(relx = 0, x = 10, y = 140)
@@ -78,17 +76,46 @@ class SecondWindow(Frame):
         self.label5=Label(self, text="Parameter5:",font=("Arial", 24), bg = "black", fg = "white")
         self.label5.place(relx = 0, x = 10, y = 260)
 
-       
+        self.valueVar1 = StringVar()
+        self.valueVar1.set(str(self.initial))
+        self.valueStr1 = Label(self, textvariable=self.valueVar1, font=("Arial", 24), bg='black', fg='white')
+        self.valueStr1.place(relx=0, x= 10 + self.label1.winfo_reqwidth() + 20 , y = 20)
 
-        # self.button= Button(self, text="Change2", command = self.showMainWindow)
-        # self.button.pack()
-        # self.label_text = StringVar()
-        # self.label_text.set(str(self.counter))
-        # label = Label(self, textvariable=self.label_text, font=("Arial", 200), bg='black', fg='white')
-        # label.pack(padx=0, pady=0)
+        
+        self.valueVar2 = StringVar()
+        self.valueVar2.set(str(self.initial))
+        self.valueStr2 = Label(self, textvariable=self.valueVar2, font=("Arial", 24), bg='black', fg='white')
+        self.valueStr2.place(relx=0, x= 10 + self.label2.winfo_reqwidth() + 20 , y = 80)
+        
+        # self.valueVar3 = StringVar()
+        # self.valueVar3.set(str(self.initial))
+        # self.valueStr3 = Label(self, textvariable=self.valueVar3, font=("Arial", 24), bg='black', fg='white')
+        # self.valueStr3.place(relx=0, x= 10 + self.label1.winfo_reqwidth() + 20 , y = 20)
+        
+        # self.valueVar4 = StringVar()
+        # self.valueVar4.set(str(self.initial))
+        # self.valueStr4 = Label(self, textvariable=self.valueVar4, font=("Arial", 24), bg='black', fg='white')
+        # self.valueStr4.place(relx=0, x= 10 + self.label1.winfo_reqwidth() + 20 , y = 20)
+        
+        # self.valueVar5 = StringVar()
+        # self.valueVar5.set(str(self.initial))
+        # self.valueStr5 = Label(self, textvariable=self.valueVar5, font=("Arial", 24), bg='black', fg='white')
+        # self.valueStr5.place(relx=0, x= 10 + self.label1.winfo_reqwidth() + 20 , y = 20)
+        
+    def updateLabel(self, message):
+        #cansend vcan0 5f0#041d080008001375
+        if message.arbitration_id == 1520:
+            self.valueVar1.set(self.getDataFromMessage(message, 6, 2))
+        #cansend vcan0 5f2#03e8037502bc0650
+        if message.arbitration_id == 1522:
+            self.valueVar2.set(round(self.convertFtoC(self.getDataFromMessage(message, 6, 2)), 1))
 
-    def updateLabel(self, data):
-        self.label_text.set(str(data))
+    def convertFtoC(self, degree):
+        return (((degree/10)-32)/9)*5
+    
+    def getDataFromMessage(self, message, position, DL):
+        return int((str(message)[78-3+position*3:78-3+position*3+DL*3]).replace(" ",  ""), 16)#!-3 for Rx in frame, change if necessary
+
         
     
 
@@ -101,7 +128,7 @@ class WindowManager(Tk):
         self.resizable(False, False)
         self.current_frame=None
         self.configure(bg="black")
-        self.overrideredirect(True) #Hide title bar
+        #self.overrideredirect(True) #Hide title bar
         self.show_frame("MainWindow")
         self.bind("<KeyPress-a>", lambda event: self.show_frame("MainWindow"))
         self.bind("<KeyPress-s>", lambda event: self.show_frame("SecondWindow"))
