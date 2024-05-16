@@ -1,56 +1,84 @@
 from tkinter import *
-
 import can
-
 import threading
 
 
 
 class CanListener(threading.Thread):
-
-    def __init__(self, updateLabel, pageName):
-
+    def __init__(self, updateLabel, pageName, errorFrame):
         super().__init__()
-
         self.updateLabelMain = updateLabel
-
-        self.bus = can.interface.Bus(channel='vcan0', bustype='socketcan', bitrate = 500000)
-
+        self.errorFrame = errorFrame
         self.running = True
-
-        self.pageName=pageName
-
-        self.parameterIds=[1520, 1522, 1523, 152, 277]
-
-    #Gear: cansend vcan0 115#ABCDEFABCDEF02FF
+        self.pageName = pageName
+        self.parameterIds = [1520, 1522, 1523, 152, 277]
+        self.bus = None
 
     def run(self):
-
-        while self.running:
-
-            message = self.bus.recv()
-
+        try:
+            self.bus = can.interface.Bus(channel='vcan0', bustype='socketcan', bitrate=500000)
+            while self.running:
+                message = self.bus.recv()
+                self.process_message(message)
+        except can.CanError as e:
+            print("Error receiving CAN message:", e)
             
+            # Handle error here
 
-            if message.arbitration_id == 277 and self.pageName == "MainWindow":  # Adjust this ID according to your CAN message
-
-                self.updateLabelMain(str(message.data)[39:40])
-
-            if message.arbitration_id in self.parameterIds and self.pageName == "SecondWindow":
-
-                self.updateLabelMain(message)
-
-
-
+    def process_message(self, message):
+        if message.arbitration_id in self.parameterIds:
+            if message.arbitration_id == 1520 and self.pageName== "SecondWindow":
+                parameter = 1
+                message= self.getDataFromMessage(message, 6, 2)
+                self.updateLabelMain(message, parameter, 1)
+            
+            elif message.arbitration_id == 1522:
+                message = round(self.convertFtoC(self.getDataFromMessage(message, 6, 2)), 1)
+                parameter = 2
+                if message > 100:
+                    if self.pageName == "MainWindow":
+                        self.errorFrame(self.pageName, "CLT TEMP", message)
+                    elif self.pageName == "SecondWindow":
+                        self.updateLabelMain(message, parameter, 1)
+                elif message <= 100 and self.pageName == "SecondWindow":
+                    self.updateLabelMain(message, parameter, 0)
+                    
+            elif message.arbitration_id ==1523:
+                if self.pageName == "SecondWindow":
+                    message1 = round(self.getDataFromMessage(message, 0, 2)/10, 2)
+                    parameter = 3
+                    self.updateLabelMain(message1, parameter, 0)
+                message2 = round(self.getDataFromMessage(message, 2, 2)/10, 1)
+                parameter=5
+                if message2 < 10:
+                    if self.pageName == "MainWindow":
+                        self.errorFrame(self.pageName, "BATT VOL LOW", message2)
+                    elif self.pageName == "SecondWindow":
+                        self.updateLabelMain(message, parameter, 1)
+                elif message2 > 15:
+                    if self.pageName == "MainWindow":
+                        self.errorFrame(self.pageName, "BATT VOL HIGH", message2)
+                    elif self.pageName== "SecondWindow":
+                        self.updateLabelMain(message2, parameter, 1)
+            elif message.arbitration_id == 277:
+                parameter = 4
+                if self.getDataFromMessage(message, 0, 2)>300:
+                    self.updateLabelMain(True,parameter,1)
+                else: 
+                    self.updateLabelMain(False, parameter, 0)
                 
 
-
-
     def stop(self):
-
         self.running = False
+        if self.bus:
+            self.bus.shutdown()
 
-        self.bus.shutdown()
+    def convertFtoC(self, degree):
+        return (((degree / 10) - 32) / 9) * 5
+
+    def getDataFromMessage(self, message, position, DL):
+        return int((str(message)[78 - 3 + position * 3:78 - 3 + position * 3 + DL * 3]).replace(" ", ""), 16)
+
 
 
 
@@ -125,7 +153,6 @@ class SecondWindow(Frame):
         
 
     def showMainWindow(self):
-
         self.show_frame("MainWindow")
 
 
@@ -188,7 +215,7 @@ class SecondWindow(Frame):
 
         self.valueVar4 = StringVar()
 
-        self.valueVar4.set(str(self.initial))
+        self.valueVar4.set("OFF")
 
         self.valueStr4 = Label(self, textvariable=self.valueVar4, font=("Arial", 24), bg='black', fg='white')
 
@@ -206,61 +233,110 @@ class SecondWindow(Frame):
 
         
 
-    def updateLabel(self, message):
+    def updateLabel(self, message, parameter, err):
+        if parameter == 1:
+            self.valueVar1.set(message)
+        
+        if parameter == 2:
+            self.valueVar2.set(message)
+            if err == 1:
+                self.valueStr2.config(fg='red')
+            if self.valueStr2.cget("fg") == 'red' and err == 0:
+                self.valueStr2.config(fg='white')
+        if parameter == 3:
+            self.valueVar3.set(message)        
+        if parameter ==4:
+            if err == 1:
+                self.valueVar4.set("ON")
+                self.valueStr4.config(fg='red')           
+            if self.valueStr4.cget("fg") == 'red' and err == 0:
+                self.valueStr4.config(fg='white')
+                self.valueVar4.set("OFF")
+        if parameter == 5:
+            self.valueVar5.set(message)
+            if err == 1:
+                self.valueStr5.config(fg='red')
+            if self.valueStr5.cget("fg") == 'red' and err == 0:
+                self.valueStr5.config(fg='white')
+            
+        
+            
 
         #cansend vcan0 5f0#041d080008001375
+        # if message.arbitration_id == 1520:
 
-        if message.arbitration_id == 1520:
+        #     self.valueVar1.set(self.getDataFromMessage(message, 6, 2))
 
-            self.valueVar1.set(self.getDataFromMessage(message, 6, 2))
+        # #cansend vcan0 5f2#03e8037502bc0650
+        # 03 e8 03 75 02 bc 06 50
 
-        #cansend vcan0 5f2#03e8037502bc0650
+        # if message.arbitration_id == 1522:
 
-        if message.arbitration_id == 1522:
+        #     self.valueVar2.set(round(self.convertFtoC(self.getDataFromMessage(message, 6, 2)), 1))
 
-            self.valueVar2.set(round(self.convertFtoC(self.getDataFromMessage(message, 6, 2)), 1))
+        # #cansend vcan0 5f3#00770089004a0000
 
-        #cansend vcan0 5f3#00770089004a0000
+        # if message.arbitration_id == 1523:
 
-        if message.arbitration_id == 1523:
+        #     self.valueVar3.set(round(self.getDataFromMessage(message, 0, 2)/10, 2))
 
-            self.valueVar3.set(round(self.getDataFromMessage(message, 0, 2)/10, 2))
+        #     self.valueVar5.set(round(self.getDataFromMessage(message, 2, 2)/10, 1))
 
-            self.valueVar5.set(round(self.getDataFromMessage(message, 2, 2)/10, 1))
+        # if message.arbitration_id == 277:
 
-        if message.arbitration_id == 277:
+        #     if self.getDataFromMessage(message, 0, 2)>300:
 
-            if self.getDataFromMessage(message, 0, 2)>300:
+        #         self.valueVar4.set("ON")
 
-                self.valueVar4.set("ON")
-
-            else: self.valueVar4.set("OFF")
-
-
-
-        
-
-        
-
-
+        #     else: self.valueVar4.set("OFF")
 
     def convertFtoC(self, degree):
-
         return (((degree/10)-32)/9)*5
-
-    
 
     def getDataFromMessage(self, message, position, DL):
 
         return int((str(message)[78-3+position*3:78-3+position*3+DL*3]).replace(" ",  ""), 16)#!-3 for Rx in frame, change if necessary
 
+  
 
-
+class ErrorWindow(Frame):
+    def __init__(self, master, lastFrame, parameter, data=None):
+        super().__init__(master, bg='black', padx=0, pady=0, width=480, height=320)
+        self.master= master
+        self.size()
+        self.parameter = parameter
+        self.data = data
+        print(data)
+        self.show_frame=master.show_frame
+        self.lastFrame=lastFrame
+        self.createWidgets()
+        self.timeout=3000
+        self.toggle_color()
+        self.after(self.timeout, self.show_last_frame)
         
-
-    
-
-
+        
+    def createWidgets(self):
+        self.label = Label(self, text = self.parameter, font=("Arial", 65), bg = "black", fg = "white")
+        self.label.place(relx = 0.5, rely=0.3, anchor="center")
+        
+        self.label2 = Label(self, text = str(self.data), font=("Arial", 65), bg = "black", fg = "white")
+        self.label2.place(relx = 0.5, rely=0.7, anchor="center")
+        
+    def show_last_frame(self):
+        print("Show last frame from error window")
+        self.show_frame("MainWindow")
+        
+        
+    def toggle_color(self):
+        if self.cget("bg") == "black":
+            self.config(bg="white")
+            self.label.config(fg="black", bg="white")
+            self.label2.config(fg="black", bg="white")
+        else:
+            self.config(bg="black")
+            self.label.config(fg="white", bg="black")
+            self.label2.config(fg="white", bg="black")
+        self.after(500, self.toggle_color)  # Toggle color every 500 milliseconds (0.5 seconds)
 
 
 
@@ -279,6 +355,7 @@ class WindowManager(Tk):
         self.current_frame=None
 
         self.configure(bg="black")
+        self.can_listener = None
 
         #self.overrideredirect(True) #Hide title bar
 
@@ -288,32 +365,36 @@ class WindowManager(Tk):
 
         self.bind("<KeyPress-s>", lambda event: self.show_frame("SecondWindow"))
 
-    
-
-        
-
-        
 
     def show_frame(self, page_name):
-
+        print("show frame function from window manager")
         if self.current_frame is not None:
-
             self.current_frame.destroy()
+        
+        if self.can_listener is not None:  
+            self.can_listener.stop()  
+           
 
         if page_name == "MainWindow":
-
             self.current_frame = MainWindow(self)
 
         elif page_name == "SecondWindow":
-
             self.current_frame = SecondWindow(self)
 
         self.current_frame.pack()
-
-        self.can_listener= CanListener(self.current_frame.updateLabel, page_name)
-
+        self.can_listener= CanListener(self.current_frame.updateLabel, page_name, self.errorFrame)
         self.can_listener.start()
-
+        
+    def errorFrame(self, lastPage, parameter, data):
+        if self.current_frame is not None:
+            self.current_frame.destroy()
+        if self.can_listener is not None:  
+            self.can_listener.stop() 
+        self.current_frame = ErrorWindow(self, lastPage, parameter, data)
+        self.current_frame.pack()
+        print("ErrorFrame function\n")
+        
+        
 
 
 
@@ -323,4 +404,3 @@ if __name__ == "__main__":
     app = WindowManager()
 
     app.mainloop()
-
