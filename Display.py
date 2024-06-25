@@ -4,22 +4,23 @@ import threading
 #import pyautogui
 import time
 import subprocess
-import RPi.GPIO as GPIO
-
+# import RPi.GPIO as GPIO
+from DeltaTime import DeltaTime 
 
 class CanListener(threading.Thread):
-    def __init__(self, updateLabel, pageName, errorFrame):
+    def __init__(self, deltaTime, updateLabel, pageName, errorFrame):
         super().__init__()
         self.updateLabelMain = updateLabel
         self.errorFrame = errorFrame
         self.running = True
         self.pageName = pageName
-        self.parameterIds = [1520, 1522, 1523, 152, 277]
+        self.parameterIds = [1520, 1522, 1523, 152, 277, 0x116]
         self.bus = None
+        self.deltaTime = deltaTime
 
     def run(self):
         try:
-            self.bus = can.interface.Bus(channel='can0', bustype='socketcan', bitrate=500000)
+            self.bus = can.interface.Bus(channel='vcan0', bustype='socketcan', bitrate=500000)
             while self.running:
                 message = self.bus.recv()
                 print(message)
@@ -32,6 +33,12 @@ class CanListener(threading.Thread):
     def process_message(self, message):
         if message.arbitration_id in self.parameterIds:
             print(message)
+            if message.arbitration_id == 0x116: 
+                delta = self.deltaTime.process_message_from_string(message)
+                print(delta)
+                self.updateLabelMain(delta, 1)
+                print("If 116")
+                
             if message.arbitration_id == 1520 and self.pageName== "SecondWindow":
                 parameter = 1
                 message= self.getDataFromMessage(message, 6, 2)
@@ -77,7 +84,7 @@ class CanListener(threading.Thread):
                     else: 
                         self.updateLabelMain(False, parameter, 0)
                 elif self.pageName=="MainWindow":
-                    self.updateLabelMain(self.getDataFromMessage(message, 6, 1))
+                    self.updateLabelMain(self.getDataFromMessage(message, 6, 1), 0)
 
     def stop(self):
         self.running = False
@@ -126,24 +133,57 @@ class MainWindow(Frame):
 
         self.label_text.set(str(self.counter))
 
-        label = Label(self, textvariable=self.label_text, font=("Arial", 600), bg='black', fg='white')
+        label = Label(self, textvariable=self.label_text, font=("Arial", 550), bg='black', fg='white')
 
-        label.place(relx = 0,rely = 0, x = 330, y = -100)
-
+        label.place(x = 350, y = 10)
+        self.canvas_width = 500
+        self.canvas_height = 50
+        self.deltaTimeRectangle = Canvas(width=self.canvas_width, height=self.canvas_height)
+        
+        self.deltaTimeRectangle.place(x=375, y=40)
+        
+        self.labelDelta = StringVar()
+        self.labelDelta.set('0.0')
+        self.deltaLabel = Label(self, textvariable=self.labelDelta, font=("Arial", 50), bg='black', fg='red')
+        self.deltaLabel.place(x=950, y=30)
+        
+    def draw_filled_rectangle(self, fillPercentage):
+        print(fillPercentage)
+        self.deltaTimeRectangle.delete("all") 
+        # if fillPercentage < int(0) and fillPercentage < int(-1):
+        #     fillPercentage = int(-1)
+        # if fillPercentage > int(0) and fillPercentage > int(1):
+        #     fillPercentage = int(1)
+        
+        # Draw background rectangle
+        self.deltaTimeRectangle.create_rectangle(0, 0, self.canvas_width, self.canvas_height, fill="white", outline="black")
+        
+        # Calculate filled rectangle dimensions
+        center_x = self.canvas_width / 2
+        fill_width = self.canvas_width * fillPercentage / 2
+        
+        # Draw filled rectangles
+        if fillPercentage < 0:
+            self.deltaTimeRectangle.create_rectangle(center_x, 0, center_x + fill_width, self.canvas_height, fill="red", outline="")
+        else:
+            fill_width = fill_width * -1
+            self.deltaTimeRectangle.create_rectangle(center_x - fill_width, 0, center_x, self.canvas_height, fill="green", outline="")
+    
         
 
+    def updateLabel(self, data, parameter):
+        if parameter == 0:
+            if data == "0":
 
+                self.label_text.set(str("N"))
 
-    def updateLabel(self, data):
+            else: 
 
-        if data == "0":
-
-            self.label_text.set(str("N"))
-
-        else: 
-
-            self.label_text.set(str(data))  
-
+                self.label_text.set(str(data))  
+        if parameter == 1:
+            self.labelDelta.set(data)
+            self.draw_filled_rectangle(data)
+            
     
 
 
@@ -163,6 +203,7 @@ class SecondWindow(Frame):
         self.createWidgets()
 
         self.show_frame=master.show_frame
+        
 
         
 
@@ -352,6 +393,10 @@ class ErrorWindow(Frame):
             self.label2.config(fg="white", bg="black")
         self.after(500, self.toggle_color)  # Toggle color every 500 milliseconds (0.5 seconds)
 
+# class DeltaTime(threading.Thread):
+#     def calculateDelta(self, message):
+#         print(message)
+#         return "Doamne fereste"
 
 
 class WindowManager(Tk):
@@ -364,24 +409,27 @@ class WindowManager(Tk):
 
         self.geometry("1280x720")
 
-        self.resizable(False, False)
+        #self.resizable(False, False)
 
         self.current_frame=None
 
         self.configure(bg="black")
         self.can_listener = None
+        self.deltaTime=DeltaTime()
+        self.deltaTime.__init__()
+        self.deltaTime.start()
 
-        self.overrideredirect(True) #Hide title bar
+        # self.overrideredirect(True) #Hide title bar
         self.pageName="SecondWindow"
         self.bind("<KeyPress-a>", lambda event: self.show_frame())
         self.bind("<KeyPress-s>", lambda event: self.show_frame())
         self.show_frame()
         
-        GPIO.setmode(GPIO.BOARD)
-        GPIO.setup(13, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Example GPIO pin for Button A
-        GPIO.setup(15, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(13, GPIO.RISING, callback=lambda x: self.show_frame(), bouncetime=300)
-        GPIO.add_event_detect(15, GPIO.RISING, callback=lambda x: self.show_frame(), bouncetime=300)
+        # GPIO.setmode(GPIO.BOARD)
+        # GPIO.setup(13, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Example GPIO pin for Button A
+        # GPIO.setup(15, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        # GPIO.add_event_detect(13, GPIO.RISING, callback=lambda x: self.show_frame(), bouncetime=300)
+        # GPIO.add_event_detect(15, GPIO.RISING, callback=lambda x: self.show_frame(), bouncetime=300)
 
 
     def show_frame(self):
@@ -404,7 +452,7 @@ class WindowManager(Tk):
             self.pageName = "MainWindow"
 
         self.current_frame.pack()
-        self.can_listener= CanListener(self.current_frame.updateLabel, self.pageName, self.errorFrame)
+        self.can_listener= CanListener(self.deltaTime, self.current_frame.updateLabel, self.pageName, self.errorFrame)
         self.can_listener.start()
         
     def errorFrame(self, lastPage, parameter, data):
